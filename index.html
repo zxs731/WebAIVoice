@@ -1,0 +1,455 @@
+<!DOCTYPE html>  
+<html lang="en">  
+<head>  
+    <meta charset="UTF-8">  
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">  
+    <title>Voice Visualization</title>  
+    <style>  
+        body {  
+            background-color: #0A0A0A;  
+            display: flex;  
+            flex-direction: column;  
+            align-items: center;  
+            justify-content: center;  
+            height: 100vh;  
+            margin: 0;  
+        }  
+        canvas {  
+            border: 0px solid #FFFFFF;  
+        }  
+        #startButton {  
+            margin-bottom: 20px;  
+        } 
+        #result {
+            color: #FFFFFF;
+        max-width: 1200px;
+        font-size: 20px;
+        }
+        .button {  
+            display: inline-flex;  
+            align-items: center;  
+            justify-content: center;  
+            padding: 10px 20px;  
+            border-radius: 250px;  
+            border: 2px solid #6A0DAD; /* 深紫色边框 */  
+            background: linear-gradient(45deg, #8A2BE2, #DA70D6); /* 渐变色：从蓝紫色到淡紫色 */  
+            color: white;  
+            font-size: 16px;  
+            font-weight: bold;  
+            text-decoration: none;  
+            cursor: pointer;  
+            transition: all 0.3s ease;  
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);  
+        }  
+          
+        .button:hover {  
+            background: linear-gradient(45deg, #7B68EE, #DDA0DD); /* 悬停效果：从中紫色到浅紫色 */  
+        }  
+          
+        .button:active {  
+            transform: scale(0.95);  
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);  
+        }  
+          
+        .button i {  
+            margin-right: 10px;  
+        } 
+    </style>  
+</head>  
+<body>  
+    <span><button id="start-btn" class='button' style="display:none">Start</button> <button id="end-btn"  class='button' style="display:none">Stop</button> </span> 
+    <div>============================</div>
+    <div id="result" ></div>
+     <div>============================</div>
+    <canvas id="voiceCanvas" width="800" height="400" style="display:none"></canvas>  
+    <canvas id="black" width="800" height="400"  style="display:none"></canvas> 
+    <canvas id="startCanvas" width="200" height="200" class="button"></canvas>  
+    <script src="https://aka.ms/csspeech/jsbrowserpackageraw"></script>  
+    <script >
+        const canvas = document.getElementById('voiceCanvas');  
+        const black = document.getElementById('black');  
+        const startCanvas = document.getElementById('startCanvas');  
+const canvasContext = canvas.getContext('2d');  
+
+//const startButton = document.getElementById('start-btn');  
+const startButton = document.getElementById('start-btn'); 
+const endBtn = document.getElementById('end-btn');    
+// Set up audio context and analyzer  
+let audioContext;  
+let analyser;  
+let bufferLength;  
+let dataArray;
+let stream;
+const backgroundImage = new Image();  
+backgroundImage.src = 'static/mic2.png'; // 替换为你的PNG图像路
+        
+backgroundImage.onload = function() {  
+   const ctx = startCanvas.getContext('2d');  
+                // 计算缩小后的尺寸  
+        const scaledWidth = backgroundImage.width / 2;  
+        const scaledHeight = backgroundImage.height / 2;  
+  
+        // 计算图像在Canvas中央的位置  
+        const x = (startCanvas.width - scaledWidth) / 2;  
+        const y = (startCanvas.height - scaledHeight) / 2;  
+  
+        // 清除Canvas内容  
+        ctx.clearRect(0, 0, black.width, black.height);  
+  
+        // 将图像缩小后绘制到Canvas中央  
+        ctx.drawImage(backgroundImage, x, y, scaledWidth, scaledHeight);
+    
+    };     
+  
+//startButton.addEventListener('click', async () => );  
+async function showMic(){  
+    canvas.style.display="";
+    black.style.display="None";
+    // Ensure the audio context is created inside a user interaction  
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();  
+    analyser = audioContext.createAnalyser();  
+    analyser.fftSize = 2048;  
+    bufferLength = analyser.frequencyBinCount;  
+    dataArray = new Uint8Array(bufferLength);  
+  
+    try {  
+         stream = await navigator.mediaDevices.getUserMedia({ audio: true });  
+        /*
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: {  
+                deviceId: 'default',  
+                sampleRate: 44100,  
+                sampleSize: 16,  
+                channelCount: 2,  
+                echoCancellation: false,  
+                autoGainControl: false,  
+                noiseSuppression: false,  
+                latency: 0  
+            }  });  
+        */
+        const source = audioContext.createMediaStreamSource(stream);  
+        source.connect(analyser);  
+        draw();  
+    } catch (err) {  
+        console.error('Error accessing the microphone', err);  
+    }  
+} 
+function stopMic() {  
+    canvas.style.display="None";
+    black.style.display="";
+    if (stream) {  
+        stream.getTracks().forEach(track => track.stop());  
+    }  
+    if (audioContext) {  
+        audioContext.close();  
+    }
+    
+}  
+// Function to apply a weight to the data to create a middle-high, sides-low effect  
+function applyWeight(data) {  
+    const weightedData = new Float32Array(data.length);  
+    const center = data.length / 2;  
+    const sigma = center / 2;  // Standard deviation for Gaussian-like distribution  
+  
+    for (let i = 0; i < data.length; i++) {  
+        const distanceFromCenter = Math.abs(i - center);  
+        const weight = Math.exp(-Math.pow(distanceFromCenter, 2) / (2 * Math.pow(sigma, 2)));  
+        weightedData[i] = data[i] * weight;  
+    }  
+  
+    return weightedData;  
+}  
+  
+// Function to draw the waveform  
+function draw() {  
+    requestAnimationFrame(draw);  
+  
+    analyser.getByteTimeDomainData(dataArray);  
+  
+    // Convert Uint8Array to Float32Array for processing  
+    const floatDataArray = new Float32Array(dataArray.length);  
+    for (let i = 0; i < dataArray.length; i++) {  
+        floatDataArray[i] = (dataArray[i] - 128) / 128.0;  
+    }  
+  
+    const weightedData = applyWeight(floatDataArray);  
+  
+    canvasContext.clearRect(0, 0, canvas.width, canvas.height);  
+    const scaledWidth = backgroundImage.width / 2;  
+    const scaledHeight = backgroundImage.height / 2;  
+     // 计算图像在Canvas中央的位置  
+    const x1 = (canvas.width - scaledWidth) / 2;  
+    const y1 = (canvas.height - scaledHeight) / 2;  
+    canvasContext.drawImage(backgroundImage, x1, y1, scaledWidth, scaledHeight);  
+    // Create gradient  
+    const gradient = canvasContext.createLinearGradient(0, 0, canvas.width, canvas.height);  
+    gradient.addColorStop(0, '#ff00ff');  
+    gradient.addColorStop(1, '#00ffff');  
+  
+    canvasContext.fillStyle = gradient;  
+    canvasContext.lineWidth = 2;  
+    canvasContext.strokeStyle = gradient;  
+  
+    // Draw the waveform  
+    canvasContext.beginPath();  
+    const sliceWidth = canvas.width * 1.0 / bufferLength;  
+    let x = 0;  
+  
+    canvasContext.moveTo(x, canvas.height / 2);  
+    for (let i = 0; i < bufferLength; i++) {  
+        const y = (weightedData[i] + 1) * canvas.height / 2;  
+  
+        canvasContext.lineTo(x, y);  
+        x += sliceWidth;  
+    }  
+    canvasContext.lineTo(canvas.width, canvas.height / 2);  
+    canvasContext.closePath();  
+    canvasContext.fill();  
+    canvasContext.stroke();  
+}  
+
+    </script>  
+    <script>  
+        //const startBtn = document.getElementById('start-btn'); 
+        const endButton = document.getElementById('end-btn');  
+        //const speakBtn = document.getElementById('speak-btn');  
+        //const textInput = document.getElementById('text-input');  
+        const resultDiv = document.getElementById('result');  
+  
+        const subscriptionKey = 'xxxx';  // 替换为你的 Azure Speech API Key  
+        const serviceRegion = 'eastasia'; // 替换为你的服务区域，例如 "westus"  
+        
+        const speechConfig = SpeechSDK.SpeechConfig.fromSubscription(subscriptionKey, serviceRegion);  
+        //speechConfig.speechRecognitionLanguage = "en-US"; // 设置识别语言为英语  
+//        speechConfig.speechSynthesisVoiceName = "zh-CN-XiaoxiaoMultilingualNeural"; // 设置发音角色为小晓  
+        //speechConfig.speech_synthesis_voice_name = "zh-CN-XiaoxiaoMultilingualNeural"; // 设置发音角色为小晓  
+        const audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();  
+        //speechConfig.speech_synthesis_language = "zh-CN";
+        //speechConfig.speech_recognition_language = "en-US";
+        
+        //const recognizer = new SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);  
+        //const speechRecognitionConfig = SpeechSDK.SpeechConfig.fromEndpoint(new URL(`wss://${serviceRegion}.stt.speech.microsoft.com/speech/universal/v2`), subscriptionKey)
+        var autoDetectSourceLanguageConfig =  SpeechSDK.AutoDetectSourceLanguageConfig.fromLanguages("en-US,ja-JP,zh-CN".split(','));
+        var recognizer = SpeechSDK.SpeechRecognizer.FromConfig(speechConfig, autoDetectSourceLanguageConfig, SpeechSDK.AudioConfig.fromDefaultMicrophoneInput());
+        //speechConfig.speech_synthesis_voice_name = "zh-CN-XiaoxiaoMultilingualNeural";
+        var synthesizer = new SpeechSDK.SpeechSynthesizer(speechConfig);  
+        var isrunning=false;  
+        var player;
+        //startButton.addEventListener('click',async () => { 
+        startCanvas.addEventListener('click',async () => { 
+            startCanvas.style.display="None";
+            endButton.style.display="";
+            recognizer = SpeechSDK.SpeechRecognizer.FromConfig(speechConfig, autoDetectSourceLanguageConfig, SpeechSDK.AudioConfig.fromDefaultMicrophoneInput());
+            var h="Hi，very nice to serve you. Please tell me your question.";
+            resultDiv.innerHTML = '<br>AI: '+h; 
+           await text_to_speech(h);
+            
+            isrunning=true;
+           //await run();
+            /*
+            recognizer.recognizeOnceAsync(result => {  
+                if (result.reason === SpeechSDK.ResultReason.RecognizedSpeech) {  
+                    //resultDiv.innerHTML = `You said: ${result.text}`;  
+                    handleTranscript(result.text);  
+                } else {  
+                    resultDiv.innerHTML = `Error: ${result.errorDetails}`;  
+                }  
+            });  
+            */
+        });  
+        endButton.addEventListener('click',async () => {  
+            isrunning=false;
+            startCanvas.style.display="";
+            black.style.display="None";
+            endButton.style.display="None";
+            canvas.style.display="None";
+            if(player){
+                player.pause();
+                document.locattion.href=document.locattion.href;
+            }
+            /*
+            try{
+                recognizer.close();
+                synthesizer.close(() => {}, (x) => {});
+            }catch(e){
+                console.log(e);
+            }
+            */
+      
+       //await text_to_speech("Hi，very nice to serve you. Please tell me your question.");
+          
+        });  
+       
+function sleep(ms) {  
+                return new Promise(resolve => setTimeout(resolve, ms));  
+            }  
+        function htmlEncode(text) {
+            const entityMap = {
+              '&': '&amp;',
+              '<': '&lt;',
+              '>': '&gt;',
+              '"': '&quot;',
+              "'": '&#39;',
+              '/': '&#x2F;'
+            };
+
+            return String(text).replace(/[&<>"'\/]/g, (match) => entityMap[match])
+        }
+       async function text_to_speech(text,onEndFunc=run) { 
+         text = text.replace(/\*/g, '');  
+         text = text.replace(/#/g, ''); 
+         const ssml = `<speak xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" xmlns:emo="http://www.w3.org/2009/10/emotionml" version="1.0" xml:lang="en-US"><voice name="zh-CN-XiaoxiaoMultilingualNeural"><prosody rate="+20.00%">${htmlEncode(text)}</prosody></voice></speak>`;  
+        player = new SpeechSDK.SpeakerAudioDestination();
+        if(onEndFunc){
+            player.onAudioStart = function(_) {
+              window.console.log("playback started");
+            }
+            player.onAudioEnd =async function (_) {
+              window.console.log("playback finished");
+              await onEndFunc();
+            };
+        }
+        var audioConfig  = SpeechSDK.AudioConfig.fromSpeakerOutput(player);
+        synthesizer = new SpeechSDK.SpeechSynthesizer(speechConfig,audioConfig);     
+            return new Promise((resolve, reject) => {  
+                  
+             synthesizer.speakSsmlAsync(  
+                ssml,  
+                async result => {  
+                    if (result.reason === SpeechSDK.ResultReason.SynthesizingAudioCompleted) {  
+                        console.log("Synthesis completed."); 
+                        /*
+                        if(result.audioDuration){
+                            const audioDurationInMs = result.audioDuration / 10000; 
+                            const delta = audioDurationInMs/10000;
+                            console.log("audioDuration:"+audioDurationInMs); 
+                            console.log("delta*4 :"+delta*4); 
+                            await sleep(audioDurationInMs-(delta*4));  
+                            
+                        }
+                        */
+                        resolve(true);
+                       
+                    } else {  
+                        console.error("Speech synthesis canceled, " + result.errorDetails);  
+                        resolve(false);
+                    }  
+                    synthesizer.close();  
+                    
+                },  
+                error => {  
+                    console.error(error);  
+                    synthesizer.close();  
+                    resolve(false);
+                });  
+            });
+        }  
+  
+       async function handleTranscript(transcript) {  
+            const wakeupWord = 'hello'; // 设置你的唤醒词  
+            if (transcript.toLowerCase().includes(wakeupWord)) {  
+                var hello="Hi，very nice to serve you. Please tell me your question.";
+                resultDiv.innerHTML += '<br>AI: '+hello;  
+                text_to_speech(hello);
+                //await run();
+            }  
+        }  
+       
+      async  function run(){
+            if(isrunning){
+              console.log("speech_to_text start...");
+              setTimeout(showMic, 0);
+              var q =await speech_to_text();
+              if(!isrunning){
+                return;
+              }
+              stopMic();
+                console.log("speech_to_text get： "+q);  
+              resultDiv.innerHTML = '<br>You: '+q; 
+                if(q=="..."){
+                    await text_to_speech("I cannot understand.",null);
+                    q="...";
+                }
+              if(!isrunning){
+                return;
+              }  
+              var a =await chat(q);
+                  console.log("chat ： "+a);  
+              resultDiv.innerHTML = '<br>AI: '+a;  
+              if(!isrunning){
+                return;
+              }  
+              await text_to_speech(a);
+                console.log("text_to_speech end...");  
+              
+            }
+            
+        }
+      async function speech_to_text() {  
+            //const recognizer = new SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);  
+          
+            return new Promise((resolve, reject) => {  
+                recognizer.recognizeOnceAsync(result => {  
+                    if (result.reason === SpeechSDK.ResultReason.RecognizedSpeech) {  
+                        resolve(result.text);  
+                        console.log("RecognizedSpeech："+result.text);  
+                    } else if((result.reason === SpeechSDK.ResultReason.NoMatch)){  
+                        resolve("..."); 
+                        console.log("ResultReason: "+"I cannot understand.");  
+                    }else{
+                        resolve('Faied');  
+                    }  
+                });  
+            });  
+        }  
+        messages = [{  
+                "role": "system",  
+                "content": "You are an AI assistant. You can help user to find information. Note: when user doesn't input anything, you should ask user and guide user to find their question!"  
+              } ];
+        function callAPI(question){
+            //your api logic and return the string format
+            return "You said: "+question;
+        }
+        async function chat(question){
+            
+            messages.push({  
+                "role": "user",  
+                "content": question  
+              }  );
+            
+            // 封装POST请求为一个函数，并使用async/await  
+            async function postData(url = '', data = {}) {  
+              const response = await fetch(url, {  
+                method: 'POST', // 使用POST方法  
+                headers: {  
+                  'Content-Type': 'application/json', // 指定请求头的Content-Type为application/json  
+                      'api-key':'xxx' //替换为你的Azure openai的Key
+                },  
+                body: JSON.stringify(data) // 将JavaScript对象转换为JSON字符串  
+              });  
+              
+              if (!response.ok) {  
+                throw new Error('Network response was not ok ' + response.statusText);  
+              }  
+              
+              return response.json(); // 将响应解析为JSON格式  
+            }  
+  
+            try {  
+                const responseData = await postData('https://azureopenai0510.openai.azure.com/openai/deployments/gpt-4o-mini/chat/completions?api-version=2024-02-15-preview', {'messages':messages});  
+                result = responseData.choices[0].message.content;
+                console.log('Success:', result); // 处理成功的响应数据  
+                messages.push({  
+                    "role": "assistant",  
+                    "content": result
+                  });
+                return result;
+              } catch (error) {  
+                console.error('Error:', error); // 处理错误  
+                return "Error";
+              }  
+
+        }
+        //双波形图
+    </script> 
+</body>  
+</html>  
